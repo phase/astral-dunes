@@ -1,0 +1,6 @@
+# rust executables
+/target
+# training data
+/data
+# weights
+*.ot
