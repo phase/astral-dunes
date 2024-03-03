@@ -1,6 +1,6 @@
 use tch::{
     data::TextData,
-    nn::{self, layer_norm, Module, ModuleT, OptimizerConfig, Path},
+    nn::{self, layer_norm, LayerNorm, Module, ModuleT, OptimizerConfig, Path},
     Device, IndexOp, Kind, Tensor,
 };
 
@@ -10,8 +10,7 @@ const BATCH_SIZE: i64 = 64;
 const EPOCHS: i64 = 100;
 const SAMPLING_LEN: i64 = 4096;
 
-// TODO: don't copy this everywhere
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 struct Config {
     vocab_size: i64,
     n_embd: i64,
@@ -59,97 +58,167 @@ impl Module for Linear {
     }
 }
 
-fn attention(p: &Path, cfg: Config) -> impl ModuleT {
-    let key = Linear::new(p / "key", cfg.n_embd, cfg.n_embd);
-    let query = Linear::new(p / "query", cfg.n_embd, cfg.n_embd);
-    let value = Linear::new(p / "value", cfg.n_embd, cfg.n_embd);
-    let proj = Linear::new(p / "proj", cfg.n_embd, cfg.n_embd);
-    let mask_init = Tensor::ones(
-        [cfg.block_size, cfg.block_size],
-        (tch::Kind::Float, p.device()),
-    )
-    .tril(0);
-    let mask = mask_init.view([1, 1, cfg.block_size, cfg.block_size]);
+#[derive(Debug)]
+struct Attention {
+    n_head: i64,
+    attn_pdrop: f64,
+    resid_pdrop: f64,
+    key: Linear,
+    query: Linear,
+    value: Linear,
+    proj: Linear,
+    mask: Tensor,
+}
 
-    nn::func_t(move |xs, train| {
+impl Attention {
+    fn new(p: &Path, cfg: &Config) -> Self {
+        let key = Linear::new(p / "key", cfg.n_embd, cfg.n_embd);
+        let query = Linear::new(p / "query", cfg.n_embd, cfg.n_embd);
+        let value = Linear::new(p / "value", cfg.n_embd, cfg.n_embd);
+        let proj = Linear::new(p / "proj", cfg.n_embd, cfg.n_embd);
+        let mask_init = Tensor::ones(
+            [cfg.block_size, cfg.block_size],
+            (tch::Kind::Float, p.device()),
+        ).tril(0);
+        let mask = mask_init.view([1, 1, cfg.block_size, cfg.block_size]);
+        Self {
+            n_head: cfg.n_head,
+            attn_pdrop: cfg.attn_pdrop,
+            resid_pdrop: cfg.resid_pdrop,
+            key,
+            query,
+            value,
+            proj,
+            mask,
+        }
+    }
+}
+
+impl ModuleT for Attention {
+    fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         // Batch size, sequence length, embedding dimensionality (n_embed)
         let (sz_b, sz_t, sz_c) = xs.size3().unwrap();
-        let head_size = sz_c / cfg.n_head;
-        let sizes = [sz_b, sz_t, cfg.n_head, head_size];
+        let head_size = sz_c / self.n_head;
+        let sizes = [sz_b, sz_t, self.n_head, head_size];
 
         let (k, q, v) = (
-            xs.apply(&key).view(sizes).transpose(1, 2),
-            xs.apply(&query).view(sizes).transpose(1, 2),
-            xs.apply(&value).view(sizes).transpose(1, 2),
+            xs.apply(&self.key).view(sizes).transpose(1, 2),
+            xs.apply(&self.query).view(sizes).transpose(1, 2),
+            xs.apply(&self.value).view(sizes).transpose(1, 2),
         );
 
         // Causaul Self Attention
         let attn = q.matmul(&k.transpose(-2, -1)) * (1.0 / f64::sqrt(head_size as f64));
         let attn = attn
-            .masked_fill(&mask.i((.., .., ..sz_t, ..sz_t)).eq(0.), f64::NEG_INFINITY)
+            .masked_fill(&self.mask.i((.., .., ..sz_t, ..sz_t)).eq(0.), f64::NEG_INFINITY)
             .softmax(-1, tch::Kind::Float)
-            .dropout(cfg.attn_pdrop, train);
+            .dropout(self.attn_pdrop, train);
         let ys = attn.matmul(&v);
 
         // reassembly head outputs side by side
         let ys = ys.transpose(1, 2).contiguous().view([sz_b, sz_t, sz_c]);
 
         // output projection
-        ys.apply(&proj).dropout(cfg.resid_pdrop, train)
-    })
-}
-
-fn transformer_block(p: &Path, cfg: Config) -> impl ModuleT {
-    let norm1 = layer_norm(p / "ln1", vec![cfg.n_embd], Default::default());
-    let norm2 = layer_norm(p / "ln2", vec![cfg.n_embd], Default::default());
-    let attn = attention(p, cfg);
-    let lin1 = Linear::new(p / "lin1", cfg.n_embd, 4 * cfg.n_embd);
-    let lin2 = Linear::new(p / "lin2", 4 * cfg.n_embd, cfg.n_embd);
-    nn::func_t(move |xs, train| {
-        let xs = xs + xs.apply(&norm1).apply_t(&attn, train);
-        let ys = xs
-            .apply(&norm2)
-            .apply(&lin1)
-            .gelu("none")
-            .apply(&lin2)
-            .dropout(cfg.resid_pdrop, train);
-        xs + ys
-    })
-}
-
-fn gpt(p: Path, cfg: Config) -> impl ModuleT {
-    let p = &p.set_group(NO_WEIGHT_DECAY_GROUP);
-    let tok_emb = nn::embedding(
-        p / "tok_emb",
-        cfg.vocab_size,
-        cfg.n_embd,
-        Default::default(),
-    );
-    let pos_emb = p.zeros("pos_emb", &[1, cfg.block_size, cfg.n_embd]);
-    let ln_f = layer_norm(p / "ln_f", vec![cfg.n_embd], Default::default());
-    let head = Linear::new_no_bias(p / "head", cfg.n_embd, cfg.vocab_size);
-    let mut blocks = nn::seq_t();
-    for i in 0..cfg.n_layer {
-        blocks = blocks.add(transformer_block(&(p / i), cfg));
+        ys.apply(&self.proj).dropout(self.resid_pdrop, train)
     }
-    nn::func_t(move |xs, train| {
-        let (_sz_b, sz_t) = xs.size2().unwrap();
-        let tok_emb = xs.apply(&tok_emb);
-        let pos_emb = pos_emb.i((.., ..sz_t, ..));
-        let xs = tok_emb + pos_emb;
-        xs.dropout(cfg.embd_pdrop, train)
-            .apply_t(&blocks, train)
-            .apply(&ln_f)
-            .apply(&head)
-    })
 }
 
-fn sample(data: &TextData, gpt: &impl ModuleT, input: Tensor) -> String {
+#[derive(Debug)]
+struct Block<Attn: ModuleT> {
+    resid_pdrop: f64,
+    norm1: LayerNorm,
+    norm2: LayerNorm,
+    attn: Attn,
+    lin1: Linear,
+    lin2: Linear,
+}
+
+impl<Attn: ModuleT> Block<Attn> {
+    fn new(p: &Path, cfg: &Config, attn: Attn) -> Self {
+        let norm1 = layer_norm(p / "ln1", vec![cfg.n_embd], Default::default());
+        let norm2 = layer_norm(p / "ln2", vec![cfg.n_embd], Default::default());
+        let lin1 = Linear::new(p / "lin1", cfg.n_embd, 4 * cfg.n_embd);
+        let lin2 = Linear::new(p / "lin2", 4 * cfg.n_embd, cfg.n_embd);
+        Self {
+            resid_pdrop: cfg.resid_pdrop,
+            norm1,
+            norm2,
+            attn,
+            lin1,
+            lin2,
+        }
+    }
+}
+
+impl<Attn: ModuleT> ModuleT for Block<Attn> {
+    fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
+        let xs = xs + xs.apply(&self.norm1).apply_t(&self.attn, train);
+        let ys = xs
+            .apply(&self.norm2)
+            .apply(&self.lin1)
+            .gelu("none")
+            .apply(&self.lin2)
+            .dropout(self.resid_pdrop, train);
+        xs + ys
+    }
+}
+
+#[derive(Debug)]
+struct GPT {
+    embd_pdrop: f64,
+    tok_emb: nn::Embedding,
+    pos_emb: Tensor,
+    ln_f: LayerNorm,
+    head: Linear,
+    blocks: nn::SequentialT,
+}
+
+impl GPT {
+    fn new(p: &Path, cfg: &Config) -> Self {
+        let tok_emb = nn::embedding(
+            p / "tok_emb",
+            cfg.vocab_size,
+            cfg.n_embd,
+            Default::default(),
+        );
+        let pos_emb = p.zeros("pos_emb", &[1, cfg.block_size, cfg.n_embd]);
+        let ln_f = layer_norm(p / "ln_f", vec![cfg.n_embd], Default::default());
+        let head = Linear::new_no_bias(p / "head", cfg.n_embd, cfg.vocab_size);
+        let mut blocks = nn::seq_t();
+        for i in 0..cfg.n_layer {
+            let attn = Attention::new(p, cfg);
+            blocks = blocks.add(Block::new(&(p / i), cfg, attn));
+        }
+        Self {
+            embd_pdrop: cfg.embd_pdrop,
+            tok_emb,
+            pos_emb,
+            ln_f,
+            head,
+            blocks,
+        }
+    }
+}
+
+impl ModuleT for GPT {
+    fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
+        let (_sz_b, sz_t) = xs.size2().unwrap();
+        let tok_emb = xs.apply(&self.tok_emb);
+        let pos_emb = self.pos_emb.i((.., ..sz_t, ..));
+        let xs = tok_emb + pos_emb;
+        xs.dropout(self.embd_pdrop, train)
+            .apply_t(&self.blocks, train)
+            .apply(&self.ln_f)
+            .apply(&self.head)
+    }
+}
+
+fn sample(data: &TextData, model: &impl ModuleT, input: Tensor) -> String {
     let mut input = input;
     let mut result = String::new();
 
     for _ in 0..SAMPLING_LEN {
-        let logits = input.apply_t(gpt, false).i((0, -1, ..));
+        let logits = input.apply_t(model, false).i((0, -1, ..));
         let sampled_y = logits.softmax(-1, Kind::Float).multinomial(1, true);
         let last_label = i64::try_from(&sampled_y).unwrap();
         result.push(data.label_to_char(last_label));
@@ -161,12 +230,12 @@ fn sample(data: &TextData, gpt: &impl ModuleT, input: Tensor) -> String {
 
 fn main() -> anyhow::Result<()> {
     let experiment = "shakespeare";
-    std::fs::create_dir_all(format!("data/{}", experiment))?;
+    std::fs::create_dir_all(format!("data/{experiment}"))?;
 
     let device = Device::Mps;
     let mut vs = nn::VarStore::new(device);
 
-    let data = TextData::new("data/shakespeare.txt")?;
+    let data = TextData::new(format!("data/{experiment}.txt"))?;
 
     let labels = data.labels();
     println!("labels: {:?}", labels);
@@ -182,7 +251,7 @@ fn main() -> anyhow::Result<()> {
         embd_pdrop: 0.1,
     };
 
-    let gpt = gpt(vs.root() / "gpt", cfg);
+    let gpt = GPT::new(&(vs.root() / "gpt"), &cfg);
     let args: Vec<_> = std::env::args().collect();
     if args.len() < 2 {
         anyhow::bail!("usage: main (train|predict weights.ot seqstart)")
