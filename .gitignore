@@ -4,3 +4,6 @@
 /data
 # weights
 *.ot
+
+.DS_Store
+
