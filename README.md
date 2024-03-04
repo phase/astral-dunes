@@ -16,7 +16,7 @@ Ideas
 
 ## miniGPT shakespeare
 
-After 5 batches:
+Sample after 5 batches:
 
 ```
 iD he, harir,
@@ -35,7 +35,8 @@ That'cA J fin Fd N ou M Xlin, bowenthathI reszer, t $Ry pis w rue f cd he n,hat 
 APlat itinstoun d .
 ```
 
-After 1600 batches:
+Sample after 1600 batches:
+
 ```
 DERBY:
 No. God morrows news, and breathe only to us,

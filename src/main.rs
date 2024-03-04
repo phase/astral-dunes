@@ -1,7 +1,7 @@
 use tch::{
     data::TextData,
-    nn::{self, layer_norm, LayerNorm, Module, ModuleT, OptimizerConfig, Path},
-    Device, IndexOp, Kind, Tensor,
+    nn::{self, layer_norm, LayerNorm, Module, ModuleT, OptimizerConfig, Path, Linear, linear},
+    Device, IndexOp, Kind, Tensor
 };
 
 const LEARNING_RATE: f64 = 0.0003;
@@ -9,6 +9,8 @@ const BLOCK_SIZE: i64 = 128;
 const BATCH_SIZE: i64 = 64;
 const EPOCHS: i64 = 100;
 const SAMPLING_LEN: i64 = 4096;
+
+const NO_BIAS: nn::LinearConfig = nn::LinearConfig { ws_init: nn::init::DEFAULT_KAIMING_UNIFORM, bs_init: None, bias: false, };
 
 #[derive(Debug, Clone)]
 struct Config {
@@ -25,41 +27,53 @@ struct Config {
 const NO_WEIGHT_DECAY_GROUP: usize = 0;
 const WEIGHT_DECAY_GROUP: usize = 1;
 
+
+/// Root Mean Square Layer Normalization
 #[derive(Debug)]
-struct Linear {
-    ws: Tensor,
-    bs: Tensor,
+struct RmsNorm {
+    scale: Tensor,
+    size: i64,
 }
 
-impl Linear {
-    fn new(vs: Path, in_dim: i64, out_dim: i64) -> Self {
-        let wd = vs.set_group(WEIGHT_DECAY_GROUP);
-        let no_wd = vs.set_group(NO_WEIGHT_DECAY_GROUP);
-        Self {
-            // x{in_dim} * w{out_dim, in_dim} + b{in_dim}
-            ws: wd.randn("weight", &[out_dim, in_dim], 0.0, 0.02),
-            bs: no_wd.zeros("bias", &[out_dim]),
-        }
-    }
-
-    fn new_no_bias(vs: Path, in_dim: i64, out_dim: i64) -> Self {
-        let wd = vs.set_group(WEIGHT_DECAY_GROUP);
-        let no_wd = vs.set_group(NO_WEIGHT_DECAY_GROUP);
-        Self {
-            ws: wd.randn("weight", &[out_dim, in_dim], 0.0, 0.02),
-            bs: no_wd.zeros_no_train("bias", &[out_dim]),
-        }
+impl RmsNorm {
+    fn new(p: &Path, size: i64) -> Self {
+        let scale = p.zeros("scale", &[size]);
+        Self { scale, size }
     }
 }
 
-impl Module for Linear {
+impl Module for RmsNorm {
     fn forward(&self, xs: &Tensor) -> Tensor {
-        xs.matmul(&self.ws.tr()) + &self.bs
+        let norm = (xs*xs).mean_dim(-1, true, Kind::Float);
+        let xs_norm = xs * (norm + 1e-5).rsqrt();
+        let scale = self.scale.reshape([1, 1, self.size]);
+        scale * xs_norm
     }
 }
 
+trait Norm: ModuleT + Module {
+    fn new(p: &Path, size: i64) -> Self;
+}
+
+impl Norm for LayerNorm {
+    fn new(p: &Path, size: i64) -> Self {
+        layer_norm(p, vec![size], Default::default())
+    }
+}
+
+impl Norm for RmsNorm {
+    fn new(p: &Path, size: i64) -> Self {
+        RmsNorm::new(p, size)
+    }
+}
+
+trait Attention: ModuleT {
+    fn new(p: &Path, cfg: &Config) -> Self;
+}
+
+/// Transformer Decoder-only Self Attention
 #[derive(Debug)]
-struct Attention {
+struct SelfAttention {
     n_head: i64,
     attn_pdrop: f64,
     resid_pdrop: f64,
@@ -70,12 +84,12 @@ struct Attention {
     mask: Tensor,
 }
 
-impl Attention {
+impl Attention for SelfAttention {
     fn new(p: &Path, cfg: &Config) -> Self {
-        let key = Linear::new(p / "key", cfg.n_embd, cfg.n_embd);
-        let query = Linear::new(p / "query", cfg.n_embd, cfg.n_embd);
-        let value = Linear::new(p / "value", cfg.n_embd, cfg.n_embd);
-        let proj = Linear::new(p / "proj", cfg.n_embd, cfg.n_embd);
+        let key = linear(p / "key", cfg.n_embd, cfg.n_embd, NO_BIAS);
+        let query = linear(p / "query", cfg.n_embd, cfg.n_embd, NO_BIAS);
+        let value = linear(p / "value", cfg.n_embd, cfg.n_embd, NO_BIAS);
+        let proj = linear(p / "proj", cfg.n_embd, cfg.n_embd, NO_BIAS);
         let mask_init = Tensor::ones(
             [cfg.block_size, cfg.block_size],
             (tch::Kind::Float, p.device()),
@@ -94,7 +108,7 @@ impl Attention {
     }
 }
 
-impl ModuleT for Attention {
+impl ModuleT for SelfAttention {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         // Batch size, sequence length, embedding dimensionality (n_embed)
         let (sz_b, sz_t, sz_c) = xs.size3().unwrap();
@@ -106,6 +120,8 @@ impl ModuleT for Attention {
             xs.apply(&self.query).view(sizes).transpose(1, 2),
             xs.apply(&self.value).view(sizes).transpose(1, 2),
         );
+
+        // Embedding goes here
 
         // Causaul Self Attention
         let attn = q.matmul(&k.transpose(-2, -1)) * (1.0 / f64::sqrt(head_size as f64));
@@ -124,42 +140,81 @@ impl ModuleT for Attention {
 }
 
 #[derive(Debug)]
-struct Block<Attn: ModuleT> {
+struct Block<A: Attention, N: Norm, M: MLP> {
     resid_pdrop: f64,
-    norm1: LayerNorm,
-    norm2: LayerNorm,
-    attn: Attn,
-    lin1: Linear,
-    lin2: Linear,
+    norm1: N,
+    norm2: N,
+    attn: A,
+    mlp: M,
 }
 
-impl<Attn: ModuleT> Block<Attn> {
-    fn new(p: &Path, cfg: &Config, attn: Attn) -> Self {
-        let norm1 = layer_norm(p / "ln1", vec![cfg.n_embd], Default::default());
-        let norm2 = layer_norm(p / "ln2", vec![cfg.n_embd], Default::default());
-        let lin1 = Linear::new(p / "lin1", cfg.n_embd, 4 * cfg.n_embd);
-        let lin2 = Linear::new(p / "lin2", 4 * cfg.n_embd, cfg.n_embd);
+impl<A: Attention, N: Norm, M: MLP> Block<A, N, M> {
+    fn new(p: &Path, cfg: &Config) -> Self {
         Self {
             resid_pdrop: cfg.resid_pdrop,
-            norm1,
-            norm2,
-            attn,
-            lin1,
-            lin2,
+            norm1: N::new(&(p / "ln1"), cfg.n_embd),
+            norm2: N::new(&(p / "ln2"), cfg.n_embd),
+            attn: A::new(&(p / "attn"), cfg),
+            mlp: M::new(&(p / "mlp"), cfg.n_embd, 4 * cfg.n_embd, cfg.n_embd),
         }
     }
 }
 
-impl<Attn: ModuleT> ModuleT for Block<Attn> {
+impl<A: Attention, N: Norm, M: MLP> ModuleT for  Block<A, N, M> {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         let xs = xs + xs.apply(&self.norm1).apply_t(&self.attn, train);
         let ys = xs
             .apply(&self.norm2)
-            .apply(&self.lin1)
-            .gelu("none")
-            .apply(&self.lin2)
+            .apply_t(&self.mlp, train)
             .dropout(self.resid_pdrop, train);
         xs + ys
+    }
+}
+
+#[derive(Debug)]
+struct GeluMLP {
+    lin1: Linear,
+    lin2: Linear,
+}
+
+impl Module for GeluMLP {
+    fn forward(&self, xs: &Tensor) -> Tensor {
+        xs.apply(&self.lin1).gelu("none").apply(&self.lin2)
+    }
+}
+
+impl MLP for GeluMLP {
+    fn new(p: &Path, in_dim: i64, hidden_dim: i64, out_dim: i64) -> Self {
+        let lin1 = linear(p / "lin1", in_dim, hidden_dim, NO_BIAS);
+        let lin2 = linear(p / "lin2", hidden_dim, out_dim, NO_BIAS);
+        Self { lin1, lin2 }
+    }
+}
+
+trait MLP: ModuleT {
+    fn new(p: &Path, in_dim: i64, hidden_dim: i64, out_dim: i64) -> Self;
+}
+
+
+/// Multi-layer Perceptron using the Sigmoid Linear Unit (aka Swish) activation function
+#[derive(Debug)]
+struct SwishMLP {
+    lin1: Linear,
+    lin2: Linear,
+}
+
+impl Module for SwishMLP {
+    fn forward(&self, xs: &Tensor) -> Tensor {
+        // silu(x) = x * sigmoid(x)
+        xs.apply(&self.lin1).silu().apply(&self.lin2)
+    }
+}
+
+impl MLP for SwishMLP {
+    fn new(p: &Path, in_dim: i64, hidden_dim: i64, out_dim: i64) -> Self {
+        let lin1 = linear(p / "lin1", in_dim, hidden_dim, NO_BIAS);
+        let lin2 = linear(p / "lin2", hidden_dim, out_dim, NO_BIAS);
+        Self { lin1, lin2 }
     }
 }
 
@@ -183,11 +238,10 @@ impl GPT {
         );
         let pos_emb = p.zeros("pos_emb", &[1, cfg.block_size, cfg.n_embd]);
         let ln_f = layer_norm(p / "ln_f", vec![cfg.n_embd], Default::default());
-        let head = Linear::new_no_bias(p / "head", cfg.n_embd, cfg.vocab_size);
+        let head = linear(p / "head", cfg.n_embd, cfg.vocab_size, NO_BIAS);
         let mut blocks = nn::seq_t();
         for i in 0..cfg.n_layer {
-            let attn = Attention::new(p, cfg);
-            blocks = blocks.add(Block::new(&(p / i), cfg, attn));
+            blocks = blocks.add(Block::<SelfAttention, RmsNorm, SwishMLP>::new(&(p / i), cfg));
         }
         Self {
             embd_pdrop: cfg.embd_pdrop,
@@ -232,7 +286,11 @@ fn main() -> anyhow::Result<()> {
     let experiment = "shakespeare";
     std::fs::create_dir_all(format!("data/{experiment}"))?;
 
-    let device = Device::Mps;
+    let device = if tch::utils::has_mps() {
+        Device::Mps
+    } else {
+        Device::cuda_if_available()
+    };
     let mut vs = nn::VarStore::new(device);
 
     let data = TextData::new(format!("data/{experiment}.txt"))?;
