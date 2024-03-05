@@ -17,10 +17,10 @@ pub struct SelfAttention {
 
 impl AttentionLayer for SelfAttention {
     fn new(p: &Path, cfg: &Config) -> Self {
-        let key = Linear::new(p / "key", cfg.n_embd, cfg.n_embd);
-        let query = Linear::new(p / "query", cfg.n_embd, cfg.n_embd);
-        let value = Linear::new(p / "value", cfg.n_embd, cfg.n_embd);
-        let proj = Linear::new(p / "proj", cfg.n_embd, cfg.n_embd);
+        let key = Linear::new(p / "k_proj", cfg.n_embd, cfg.n_embd);
+        let query = Linear::new(p / "q_proj", cfg.n_embd, cfg.n_embd);
+        let value = Linear::new(p / "v_proj", cfg.n_embd, cfg.n_embd);
+        let proj = Linear::new(p / "o_proj", cfg.n_embd, cfg.n_embd);
         let mask_init = Tensor::ones(
             [cfg.block_size, cfg.block_size],
             (tch::Kind::Float, p.device()),

@@ -3,6 +3,7 @@ use tch::{
     nn::{self, LayerNorm, ModuleT, OptimizerConfig},
     Device, IndexOp, Kind, Tensor
 };
+use pyo3::prelude::*;
 
 mod gelu;
 mod linear;
@@ -77,13 +78,14 @@ fn main() -> anyhow::Result<()> {
 
     let cfg = Config {
         vocab_size: labels,
-        n_embd: 512,
+        n_embd: 4096,
+        ff_int_dim: 14336,
         n_head: 8,
-        n_layer: 8,
+        n_layer: 32,
         block_size: BLOCK_SIZE,
-        attn_pdrop: 0.1,
-        resid_pdrop: 0.1,
-        embd_pdrop: 0.1,
+        attn_pdrop: 0.0,
+        resid_pdrop: 0.0,
+        embd_pdrop: 0.0,
     };
 
     let gpt = Transformer::<GPTConfig>::new(&(vs.root() / "gpt"), &cfg);
@@ -93,6 +95,9 @@ fn main() -> anyhow::Result<()> {
     }
 
     match args[1].as_str() {
+        "inspect" => {
+            test_loading_pytorch()?;
+        },
         "predict" => {
             // load varstore
             vs.load(args[3].as_str())?;
@@ -163,4 +168,12 @@ fn main() -> anyhow::Result<()> {
         _ => anyhow::bail!("usage: main (train|predict weights.ot seqstart)"),
     };
     Ok(())
+}
+
+fn test_loading_pytorch() -> PyResult<()> {
+    pyo3::prepare_freethreaded_python();
+    Python::with_gil(|py| {
+        PyModule::import(py, "torch")?;
+        Ok(())
+    })
 }

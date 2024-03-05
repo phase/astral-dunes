@@ -7,4 +7,8 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.80"
+polars = "0.38.1"
+pyo3 = "0.20.3"
+pyo3-polars = "0.12.0"
+safetensors = "0.4.2"
 tch = "0.15.0"

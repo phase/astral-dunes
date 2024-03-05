@@ -8,8 +8,13 @@ use crate::linear::Linear;
 #[derive(Debug, Clone)]
 pub struct Config {
     pub vocab_size: i64,
+    /// common model dimension. aka "hidden dimension"
     pub n_embd: i64,
+    /// feedforward internal dimension. aka "intermediate dimension"
+    pub ff_int_dim: i64,
+    /// number of attention heads
     pub n_head: i64,
+    // number of block layers
     pub n_layer: i64,
     pub block_size: i64,
     pub attn_pdrop: f64,
@@ -26,7 +31,7 @@ pub trait AttentionLayer: ModuleT {
 }
 
 pub trait FeedForward: ModuleT {
-    fn new(p: &Path, in_dim: i64, hidden_dim: i64, out_dim: i64) -> Self;
+    fn new(p: &Path, dim: i64, hidden_dim: i64) -> Self;
 }
 
 pub trait BlockConfig: std::fmt::Debug + 'static {
@@ -48,15 +53,15 @@ impl<Form: BlockConfig> Block<Form> {
     fn new(p: &Path, cfg: &Config) -> Self {
         Self {
             resid_pdrop: cfg.resid_pdrop,
-            norm1: Form::Norm::new(&(p / "ln1"), cfg.n_embd),
-            norm2: Form::Norm::new(&(p / "ln2"), cfg.n_embd),
-            attn: Form::Attn::new(&(p / "attn"), cfg),
-            ffn: Form::FF::new(&(p / "mlp"), cfg.n_embd, 4 * cfg.n_embd, cfg.n_embd),
+            norm1: Form::Norm::new(&(p / "input_layernorm"), cfg.n_embd),
+            norm2: Form::Norm::new(&(p / "post_attention_layernorm"), cfg.n_embd),
+            attn: Form::Attn::new(&(p / "self_attn"), cfg),
+            ffn: Form::FF::new(&(p / "mlp"), cfg.n_embd, cfg.ff_int_dim),
         }
     }
 }
 
-impl<Form: BlockConfig> ModuleT for  Block<Form> {
+impl<Form: BlockConfig> ModuleT for Block<Form> {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         let xs = xs + xs.apply(&self.norm1).apply_t(&self.attn, train);
         let ys = xs
@@ -66,7 +71,6 @@ impl<Form: BlockConfig> ModuleT for  Block<Form> {
         xs + ys
     }
 }
-
 
 #[derive(Debug)]
 pub struct Transformer<Form: BlockConfig> {
@@ -83,17 +87,17 @@ pub struct Transformer<Form: BlockConfig> {
 impl<Form: BlockConfig> Transformer<Form> {
     pub fn new(p: &Path, cfg: &Config) -> Self {
         let tok_emb = nn::embedding(
-            p / "tok_emb",
+            p / "embed_tokens",
             cfg.vocab_size,
             cfg.n_embd,
             Default::default(),
         );
         let pos_emb = p.zeros("pos_emb", &[1, cfg.block_size, cfg.n_embd]);
-        let ln_f = layer_norm(p / "ln_f", vec![cfg.n_embd], Default::default());
-        let head = Linear::new(p / "head", cfg.n_embd, cfg.vocab_size);
+        let ln_f = layer_norm(p / "norm", vec![cfg.n_embd], Default::default());
+        let head = Linear::new(p / "lm_head", cfg.n_embd, cfg.vocab_size);
         let mut blocks = nn::seq_t();
         for i in 0..cfg.n_layer {
-            blocks = blocks.add(Block::<Form>::new(&(p / i), cfg));
+            blocks = blocks.add(Block::<Form>::new(&(p / "model" / "layers" / i), cfg));
         }
         Self {
             embd_pdrop: cfg.embd_pdrop,

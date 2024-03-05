@@ -9,20 +9,22 @@ Ideas
 - [x] GPT 2
     - [x] Training
     - [x] Inference
-- [ ] Benchmarking
-    - Time everything
-    - Track perplexity (`e^cross_entropy_loss`)
-    - Make some graphs? maybe plotnine?
-    - Track tensor allocations?
-- [ ] LLaMa 2
+- [ ] Mistral 7B
+    - [ ] Weight conversion from pickle to safetensors
     - [ ] Load weights
     - [ ] Finetuning
+- [ ] Mixtral MoE impl
+- [ ] Benchmarking
+    - Time everything
+    - Track perplexity (`2^cross_entropy_loss`)
+    - Make some graphs? maybe polars -> plotnine?
+    - Track tensor allocations?
 
 ## experiment: zig compiler
 
 > March 04 2024
 
-118k lines of the Zig compiler concatenated together.
+[118k](https://gist.github.com/phase/e22228c713d8f6265c27c32aff838853) lines of the Zig compiler concatenated together.
 
 Sample after 5 batches:
 
