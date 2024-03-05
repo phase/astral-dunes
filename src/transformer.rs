@@ -1,12 +1,12 @@
 use tch::{
-    nn::{self, layer_norm, LayerNorm, Module, ModuleT, Path},
-    IndexOp, Tensor
+    nn::{self, layer_norm, Module, ModuleT, Path}, IndexOp, Kind, Tensor
 };
 
 use crate::linear::Linear;
 
 #[derive(Debug, Clone)]
 pub struct Config {
+    pub kind: Kind,
     pub vocab_size: i64,
     /// common model dimension. aka "hidden dimension"
     pub n_embd: i64,
@@ -23,7 +23,7 @@ pub struct Config {
 }
 
 pub trait NormLayer: ModuleT + Module {
-    fn new(p: &Path, size: i64) -> Self;
+    fn new(p: &Path, size: i64, kind: Kind) -> Self;
 }
 
 pub trait AttentionLayer: ModuleT {
@@ -31,7 +31,7 @@ pub trait AttentionLayer: ModuleT {
 }
 
 pub trait FeedForward: ModuleT {
-    fn new(p: &Path, dim: i64, hidden_dim: i64) -> Self;
+    fn new(p: &Path, dim: i64, hidden_dim: i64, kind: Kind) -> Self;
 }
 
 pub trait BlockConfig: std::fmt::Debug + 'static {
@@ -53,10 +53,10 @@ impl<Form: BlockConfig> Block<Form> {
     fn new(p: &Path, cfg: &Config) -> Self {
         Self {
             resid_pdrop: cfg.resid_pdrop,
-            norm1: Form::Norm::new(&(p / "input_layernorm"), cfg.n_embd),
-            norm2: Form::Norm::new(&(p / "post_attention_layernorm"), cfg.n_embd),
+            norm1: Form::Norm::new(&(p / "input_layernorm"), cfg.n_embd, cfg.kind),
+            norm2: Form::Norm::new(&(p / "post_attention_layernorm"), cfg.n_embd, cfg.kind),
             attn: Form::Attn::new(&(p / "self_attn"), cfg),
-            ffn: Form::FF::new(&(p / "mlp"), cfg.n_embd, cfg.ff_int_dim),
+            ffn: Form::FF::new(&(p / "mlp"), cfg.n_embd, cfg.ff_int_dim, cfg.kind),
         }
     }
 }
@@ -77,7 +77,7 @@ pub struct Transformer<Form: BlockConfig> {
     embd_pdrop: f64,
     tok_emb: nn::Embedding,
     pos_emb: Tensor,
-    ln_f: LayerNorm,
+    ln_f: Form::Norm,
     head: Linear,
     blocks: nn::SequentialT,
     // fn() keeps this struct Send + Sync
@@ -93,8 +93,8 @@ impl<Form: BlockConfig> Transformer<Form> {
             Default::default(),
         );
         let pos_emb = p.zeros("pos_emb", &[1, cfg.block_size, cfg.n_embd]);
-        let ln_f = layer_norm(p / "norm", vec![cfg.n_embd], Default::default());
-        let head = Linear::new(p / "lm_head", cfg.n_embd, cfg.vocab_size);
+        let ln_f = Form::Norm::new(&(p / "norm"), cfg.n_embd, cfg.kind);
+        let head = Linear::new(p / "lm_head", cfg.n_embd, cfg.vocab_size, cfg.kind);
         let mut blocks = nn::seq_t();
         for i in 0..cfg.n_layer {
             blocks = blocks.add(Block::<Form>::new(&(p / "model" / "layers" / i), cfg));
@@ -126,7 +126,7 @@ impl<Form: BlockConfig> ModuleT for Transformer<Form> {
 
 // adapt torch::nn::LayerNorm to our trait
 impl NormLayer for nn::LayerNorm {
-    fn new(p: &Path, size: i64) -> Self {
+    fn new(p: &Path, size: i64, _kind: Kind) -> Self {
         layer_norm(p, vec![size], Default::default())
     }
 }

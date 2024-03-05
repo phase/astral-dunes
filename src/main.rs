@@ -45,13 +45,13 @@ impl BlockConfig for LlamaConfig {
     type FF = Swish;
 }
 
-fn sample(data: &TextData, model: &impl ModuleT, input: Tensor) -> String {
+fn sample(data: &TextData, model: &impl ModuleT, input: Tensor, kind: Kind) -> String {
     let mut input = input;
     let mut result = String::new();
 
     for _ in 0..SAMPLING_LEN {
         let logits = input.apply_t(model, false).i((0, -1, ..));
-        let sampled_y = logits.softmax(-1, Kind::Float).multinomial(1, true);
+        let sampled_y = logits.softmax(-1, kind).multinomial(1, true);
         let last_label = i64::try_from(&sampled_y).unwrap();
         result.push(data.label_to_char(last_label));
         input = Tensor::cat(&[input, sampled_y.view([1, 1])], 1).narrow(1, 1, BLOCK_SIZE);
@@ -77,6 +77,7 @@ fn main() -> anyhow::Result<()> {
     println!("labels: {:?}", labels);
 
     let cfg = Config {
+        kind: Kind::Float,
         vocab_size: labels,
         n_embd: 4096,
         ff_int_dim: 14336,
@@ -88,7 +89,8 @@ fn main() -> anyhow::Result<()> {
         embd_pdrop: 0.0,
     };
 
-    let gpt = Transformer::<GPTConfig>::new(&(vs.root() / "gpt"), &cfg);
+    println!("Building model");
+    let gpt = Transformer::<LlamaConfig>::new(&(vs.root() / "gpt"), &cfg);
     let args: Vec<_> = std::env::args().collect();
     if args.len() < 2 {
         anyhow::bail!("usage: main (train|predict weights.ot seqstart)")
@@ -112,7 +114,7 @@ fn main() -> anyhow::Result<()> {
                 let label = data.char_to_label(c)? as i64;
                 let _ = input.i((0, BLOCK_SIZE - 1 - idx)).fill_(label);
             }
-            println!("{}", sample(&data, &gpt, input));
+            println!("{}", sample(&data, &gpt, input, cfg.kind));
         }
         "train" => {
             println!("Starting Training");
@@ -148,7 +150,7 @@ fn main() -> anyhow::Result<()> {
 
                         println!(".. testing inference");
                         let input = Tensor::zeros([1, BLOCK_SIZE], (Kind::Int64, device));
-                        let output: String = sample(&data, &gpt, input);
+                        let output: String = sample(&data, &gpt, input, cfg.kind);
 
                         // save output & weights to disk
                         println!(".. saving weights");

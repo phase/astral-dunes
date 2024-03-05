@@ -17,13 +17,13 @@ pub struct SelfAttention {
 
 impl AttentionLayer for SelfAttention {
     fn new(p: &Path, cfg: &Config) -> Self {
-        let key = Linear::new(p / "k_proj", cfg.n_embd, cfg.n_embd);
-        let query = Linear::new(p / "q_proj", cfg.n_embd, cfg.n_embd);
-        let value = Linear::new(p / "v_proj", cfg.n_embd, cfg.n_embd);
-        let proj = Linear::new(p / "o_proj", cfg.n_embd, cfg.n_embd);
+        let key = Linear::new(p / "k_proj", cfg.n_embd, cfg.n_embd, cfg.kind);
+        let query = Linear::new(p / "q_proj", cfg.n_embd, cfg.n_embd, cfg.kind);
+        let value = Linear::new(p / "v_proj", cfg.n_embd, cfg.n_embd, cfg.kind);
+        let proj = Linear::new(p / "o_proj", cfg.n_embd, cfg.n_embd, cfg.kind);
         let mask_init = Tensor::ones(
             [cfg.block_size, cfg.block_size],
-            (tch::Kind::Float, p.device()),
+            (cfg.kind, p.device()),
         ).tril(0);
         let mask = mask_init.view([1, 1, cfg.block_size, cfg.block_size]);
         Self {
@@ -58,7 +58,7 @@ impl ModuleT for SelfAttention {
         let attn = q.matmul(&k.transpose(-2, -1)) * (1.0 / f64::sqrt(head_size as f64));
         let attn = attn
             .masked_fill(&self.mask.i((.., .., ..sz_t, ..sz_t)).eq(0.), f64::NEG_INFINITY)
-            .softmax(-1, tch::Kind::Float)
+            .softmax(-1, xs.kind())
             .dropout(self.attn_pdrop, train);
         let ys = attn.matmul(&v);
 

@@ -10,7 +10,7 @@ pub struct RmsNorm {
 
 impl Module for RmsNorm {
     fn forward(&self, xs: &Tensor) -> Tensor {
-        let variance = (xs*xs).mean_dim(-1, true, Kind::BFloat16);
+        let variance = (xs*xs).mean_dim(-1, true, xs.kind());
         let hidden_states = xs * (variance + 1e-5).rsqrt();
         let scale = self.scale.reshape([1, 1, self.size]);
         scale * hidden_states
@@ -18,8 +18,9 @@ impl Module for RmsNorm {
 }
 
 impl NormLayer for RmsNorm {
-    fn new(p: &Path, size: i64) -> Self {
-        let scale = p.zeros("weight", &[size]);
+    fn new(p: &Path, size: i64, kind: Kind) -> Self {
+        let scale = p.zeros("weight", &[size])
+            .to_dtype(kind, false, false);
         Self { scale, size }
     }
 }

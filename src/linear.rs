@@ -1,29 +1,33 @@
-use tch::{Tensor, nn::{Module, Path}};
-use crate::{WEIGHT_DECAY_GROUP, NO_WEIGHT_DECAY_GROUP};
+use tch::{Kind, Tensor, nn::{Module, Path}};
+use crate::{NO_WEIGHT_DECAY_GROUP, WEIGHT_DECAY_GROUP};
 
 #[derive(Debug)]
 pub struct Linear {
-    ws: Tensor,
+    pub ws: Tensor,
     bs: Tensor,
 }
 
 impl Linear {
-    pub fn new(p: Path, in_dim: i64, out_dim: i64) -> Self {
+    pub fn new(p: Path, in_dim: i64, out_dim: i64, kind: Kind) -> Self {
         let wd = p.set_group(WEIGHT_DECAY_GROUP);
         let no_wd = p.set_group(NO_WEIGHT_DECAY_GROUP);
         Self {
             // x{in_dim} * w{out_dim, in_dim} + b{in_dim}
-            ws: wd.randn("weight", &[out_dim, in_dim], 0.0, 0.02),
-            bs: no_wd.zeros("bias", &[out_dim]),
+            ws: wd.randn("weight", &[out_dim, in_dim], 0.0, 0.02)
+                .to_dtype(kind, false, false),
+            bs: no_wd.zeros("bias", &[out_dim])
+                .to_dtype(kind, false, false),
         }
     }
 
-    pub fn new_no_bias(p: Path, in_dim: i64, out_dim: i64) -> Self {
+    pub fn new_no_bias(p: Path, in_dim: i64, out_dim: i64, kind: Kind) -> Self {
         let wd = p.set_group(WEIGHT_DECAY_GROUP);
         let no_wd = p.set_group(NO_WEIGHT_DECAY_GROUP);
         Self {
-            ws: wd.randn("weight", &[out_dim, in_dim], 0.0, 0.02),
-            bs: no_wd.zeros_no_train("bias", &[out_dim]),
+            ws: wd.randn("weight", &[out_dim, in_dim], 0.0, 0.02)
+                .to_dtype(kind, false, false),
+            bs: no_wd.zeros_no_train("bias", &[out_dim])
+                .to_dtype(kind, false, false),
         }
     }
 }
