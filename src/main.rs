@@ -87,22 +87,22 @@ fn main() -> anyhow::Result<()> {
         n_head: 8,
         n_layer: 32,
         block_size: 1024,
-        attn_pdrop: 0.0,
-        resid_pdrop: 0.0,
-        embd_pdrop: 0.0,
+        attn_pdrop: 0.1,
+        resid_pdrop: 0.1,
+        embd_pdrop: 0.1,
     };
 
     let cfg = Config {
         kind: Kind::BFloat16,
         vocab_size: labels,
-        n_embd: 256,
-        ff_int_dim: 1048,
+        n_embd: 512,
+        ff_int_dim: 512 * 4,
         n_head: 8,
-        n_layer: 4,
+        n_layer: 8,
         block_size: 128,
-        attn_pdrop: 0.0,
-        resid_pdrop: 0.0,
-        embd_pdrop: 0.0,
+        attn_pdrop: 0.1,
+        resid_pdrop: 0.1,
+        embd_pdrop: 0.1,
     };
 
     println!("Building model");
@@ -171,7 +171,7 @@ fn main() -> anyhow::Result<()> {
                     let perplexity = 2_f64.powf(sum_loss / cnt_loss);
                     crate::mem::debug_memory(format!("epoch={:4} batch={:4} ppl={:5.3} mem", epoch, idx, perplexity));
 
-                    if idx == 5 || idx % 500 == 0 {
+                    if idx % 500 == 0 {
                         println!("epoch={:4} loss={:5.3}", epoch, sum_loss / cnt_loss);
 
                         println!(".. testing inference");
@@ -193,7 +193,7 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        _ => anyhow::bail!("usage: main (train|predict weights.ot seqstart)"),
+        _ => anyhow::bail!("usage: astral-dunes (train|predict weights.ot seqstart)"),
     };
     Ok(())
 }

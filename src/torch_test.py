@@ -6,7 +6,7 @@ def scaled_dot_product_attention(q, k, v):
         q,
         k,
         v,
-        dropout_p=0,
+        dropout_p=0.1,
         is_causal=True,
     )
 

@@ -19,8 +19,7 @@ impl Module for RmsNorm {
 
 impl NormLayer for RmsNorm {
     fn new(p: &Path, size: i64, kind: Kind) -> Self {
-        let scale = p.zeros("weight", &[size])
-            .to_dtype(kind, false, false);
+        let scale = p.zeros("weight", &[size]);
         Self { scale, size }
     }
 }
