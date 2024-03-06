@@ -91,6 +91,7 @@ dependencies = [
  "polars",
  "pyo3",
  "pyo3-polars",
+ "pyo3-tch",
  "safetensors 0.4.2",
  "systemstat",
  "tch",
@@ -1402,6 +1403,15 @@ dependencies = [
  "polars-core",
  "pyo3",
  "thiserror",
+]
+
+[[package]]
+name = "pyo3-tch"
+version = "0.15.0"
+dependencies = [
+ "pyo3",
+ "tch",
+ "torch-sys",
 ]
 
 [[package]]

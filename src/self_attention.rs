@@ -6,13 +6,11 @@ use crate::transformer::AttentionLayer;
 #[derive(Debug)]
 pub struct SelfAttention {
     n_head: i64,
-    attn_pdrop: f64,
     resid_pdrop: f64,
     key: Linear,
     query: Linear,
     value: Linear,
     proj: Linear,
-    mask: Tensor,
 }
 
 impl AttentionLayer for SelfAttention {
@@ -21,20 +19,13 @@ impl AttentionLayer for SelfAttention {
         let query = Linear::new(p / "q_proj", cfg.n_embd, cfg.n_embd, cfg.kind);
         let value = Linear::new(p / "v_proj", cfg.n_embd, cfg.n_embd, cfg.kind);
         let proj = Linear::new(p / "o_proj", cfg.n_embd, cfg.n_embd, cfg.kind);
-        let mask_init = Tensor::ones(
-            [cfg.block_size, cfg.block_size],
-            (cfg.kind, p.device()),
-        ).tril(0);
-        let mask = mask_init.view([1, 1, cfg.block_size, cfg.block_size]);
         Self {
             n_head: cfg.n_head,
-            attn_pdrop: cfg.attn_pdrop,
             resid_pdrop: cfg.resid_pdrop,
             key,
             query,
             value,
             proj,
-            mask,
         }
     }
 }
@@ -52,15 +43,18 @@ impl ModuleT for SelfAttention {
             xs.apply(&self.value).view(sizes).transpose(1, 2),
         );
 
-        // Embedding goes here
+        // Rope Embedding goes here
+
+
+        let ys = crate::scaled_dot_product_attention(q, k, v).expect("failed to call scaled dot product attention");
 
         // Causaul Self Attention
-        let attn = q.matmul(&k.transpose(-2, -1)) * (1.0 / f64::sqrt(head_size as f64));
+        /*let attn = q.matmul(&k.transpose(-2, -1)) * (1.0 / f64::sqrt(head_size as f64));
         let attn = attn
             .masked_fill(&self.mask.i((.., .., ..sz_t, ..sz_t)).eq(0.), f64::NEG_INFINITY)
             .softmax(-1, xs.kind())
             .dropout(self.attn_pdrop, train);
-        let ys = attn.matmul(&v);
+        let ys = attn.matmul(&v);*/
 
         // reassembly head outputs side by side
         let ys = ys.transpose(1, 2).contiguous().view([sz_b, sz_t, sz_c]);

@@ -1,3 +1,4 @@
+use pyo3_tch::PyTensor;
 use tch::{
     data::TextData,
     nn::{self, LayerNorm, ModuleT, OptimizerConfig},
@@ -61,6 +62,8 @@ fn sample(data: &TextData, model: &impl ModuleT, input: Tensor, cfg: &Config) ->
 }
 
 fn main() -> anyhow::Result<()> {
+    pyo3::prepare_freethreaded_python();
+
     let experiment = "zig-compiler";
     std::fs::create_dir_all(format!("data/{experiment}"))?;
 
@@ -77,7 +80,7 @@ fn main() -> anyhow::Result<()> {
     println!("labels: {:?}", labels);
 
     let _mistral = Config {
-        kind: Kind::Float,
+        kind: Kind::BFloat16,
         vocab_size: labels,
         n_embd: 4096,
         ff_int_dim: 14336,
@@ -96,7 +99,7 @@ fn main() -> anyhow::Result<()> {
         ff_int_dim: 1048,
         n_head: 8,
         n_layer: 4,
-        block_size: 1024,
+        block_size: 128,
         attn_pdrop: 0.0,
         resid_pdrop: 0.0,
         embd_pdrop: 0.0,
@@ -195,11 +198,41 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-// TODO this dies
 fn test_loading_pytorch() -> PyResult<()> {
-    pyo3::prepare_freethreaded_python();
     Python::with_gil(|py| {
-        PyModule::import(py, "torch")?;
+        let fun: Py<PyAny> = PyModule::from_code(
+            py,
+            include_str!("torch_test.py"),
+            "torch_test.py",
+            "torch_test",
+        )?
+        .getattr("torch_example")?
+        .into();
+
+        // call object without any arguments
+        let result = fun.call0(py)?.extract::<PyTensor>(py)?.0;
+        println!("size: {:?}", result.size());
+
+        let result = scaled_dot_product_attention(result.copy(), result.copy(), result).unwrap();
+        println!("size: {:?}", result.size());
+
         Ok(())
+    })
+}
+
+pub fn scaled_dot_product_attention(q: Tensor, k: Tensor, v: Tensor) -> PyResult<Tensor> {
+    Python::with_gil(|py| {
+        let fun: Py<PyAny> = PyModule::from_code(
+            py,
+            include_str!("torch_test.py"),
+            "torch_test.py",
+            "torch_test",
+        )?
+        .getattr("scaled_dot_product_attention")?
+        .into();
+
+        // call object without any arguments
+        let result = fun.call1(py, (PyTensor(q), PyTensor(k), PyTensor(v)))?.extract::<PyTensor>(py)?.0;
+        Ok(result)
     })
 }

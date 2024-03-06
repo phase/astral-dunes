@@ -13,3 +13,4 @@ pyo3-polars = "0.12.0"
 safetensors = "0.4.2"
 systemstat = "0.2.3"
 tch = { path = "../../ai/tch-rs" }
+pyo3-tch = { path = "../../ai/tch-rs/pyo3-tch" }
