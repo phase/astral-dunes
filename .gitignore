@@ -1,5 +1,6 @@
 # rust executables
 /target
+.cargo/
 # training data
 /data
 # weights

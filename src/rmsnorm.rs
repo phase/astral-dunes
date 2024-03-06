@@ -18,7 +18,7 @@ impl Module for RmsNorm {
 }
 
 impl NormLayer for RmsNorm {
-    fn new(p: &Path, size: i64, kind: Kind) -> Self {
+    fn new(p: &Path, size: i64, _kind: Kind) -> Self {
         let scale = p.zeros("weight", &[size]);
         Self { scale, size }
     }

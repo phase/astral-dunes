@@ -9,11 +9,15 @@ pub struct Config {
     pub kind: Kind,
     pub vocab_size: i64,
     /// common model dimension. aka "hidden dimension"
-    pub n_embd: i64,
+    pub dim: i64,
     /// feedforward internal dimension. aka "intermediate dimension"
-    pub ff_int_dim: i64,
+    pub hidden_dim: i64,
+    /// TODO from mistral, what is this?
+    pub head_dim: i64,
     /// number of attention heads
     pub n_head: i64,
+    /// TODO from mistral, what is this?
+    pub n_kv_heads: i64,
     // number of block layers
     pub n_layer: i64,
     pub block_size: i64,
@@ -53,10 +57,10 @@ impl<Form: BlockConfig> Block<Form> {
     fn new(p: &Path, cfg: &Config) -> Self {
         Self {
             resid_pdrop: cfg.resid_pdrop,
-            norm1: Form::Norm::new(&(p / "input_layernorm"), cfg.n_embd, cfg.kind),
-            norm2: Form::Norm::new(&(p / "post_attention_layernorm"), cfg.n_embd, cfg.kind),
+            norm1: Form::Norm::new(&(p / "input_layernorm"), cfg.dim, cfg.kind),
+            norm2: Form::Norm::new(&(p / "post_attention_layernorm"), cfg.dim, cfg.kind),
             attn: Form::Attn::new(&(p / "self_attn"), cfg),
-            ffn: Form::FF::new(&(p / "mlp"), cfg.n_embd, cfg.ff_int_dim, cfg.kind),
+            ffn: Form::FF::new(&(p / "mlp"), cfg.dim, cfg.hidden_dim, cfg.kind),
         }
     }
 }
@@ -89,12 +93,12 @@ impl<Form: BlockConfig> Transformer<Form> {
         let tok_emb = nn::embedding(
             p / "embed_tokens",
             cfg.vocab_size,
-            cfg.n_embd,
+            cfg.dim,
             Default::default(),
         );
-        let pos_emb = p.zeros("pos_emb", &[1, cfg.block_size, cfg.n_embd]);
-        let ln_f = Form::Norm::new(&(p / "norm"), cfg.n_embd, cfg.kind);
-        let head = Linear::new(p / "lm_head", cfg.n_embd, cfg.vocab_size, cfg.kind);
+        let pos_emb = p.zeros("pos_emb", &[1, cfg.block_size, cfg.dim]);
+        let ln_f = Form::Norm::new(&(p / "norm"), cfg.dim, cfg.kind);
+        let head = Linear::new(p / "lm_head", cfg.dim, cfg.vocab_size, cfg.kind);
         let mut blocks = nn::seq_t();
         for i in 0..cfg.n_layer {
             blocks = blocks.add(Block::<Form>::new(&(p / "model" / "layers" / i), cfg));

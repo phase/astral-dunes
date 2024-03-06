@@ -82,27 +82,31 @@ fn main() -> anyhow::Result<()> {
     let _mistral = Config {
         kind: Kind::BFloat16,
         vocab_size: labels,
-        n_embd: 4096,
-        ff_int_dim: 14336,
+        dim: 4096,
+        hidden_dim: 14336,
         n_head: 8,
         n_layer: 32,
         block_size: 1024,
         attn_pdrop: 0.1,
         resid_pdrop: 0.1,
         embd_pdrop: 0.1,
+        head_dim: 128,
+        n_kv_heads: 8,
     };
 
     let cfg = Config {
         kind: Kind::BFloat16,
         vocab_size: labels,
-        n_embd: 512,
-        ff_int_dim: 512 * 4,
+        dim: 512,
+        hidden_dim: 512 * 4,
         n_head: 8,
         n_layer: 8,
         block_size: 128,
         attn_pdrop: 0.1,
         resid_pdrop: 0.1,
         embd_pdrop: 0.1,
+        head_dim: 128,
+        n_kv_heads: 8,
     };
 
     println!("Building model");
@@ -234,5 +238,22 @@ pub fn scaled_dot_product_attention(q: Tensor, k: Tensor, v: Tensor) -> PyResult
         // call object without any arguments
         let result = fun.call1(py, (PyTensor(q), PyTensor(k), PyTensor(v)))?.extract::<PyTensor>(py)?.0;
         Ok(result)
+    })
+}
+
+pub fn repeat_kv(k: Tensor, v: Tensor, repeats: i64) -> PyResult<(Tensor, Tensor)> {
+    Python::with_gil(|py| {
+        let fun: Py<PyAny> = PyModule::from_code(
+            py,
+            include_str!("torch_test.py"),
+            "torch_test.py",
+            "torch_test",
+        )?
+        .getattr("repeat_kv")?
+        .into();
+
+        // call object without any arguments
+        let result = fun.call1(py, (PyTensor(k), PyTensor(v), repeats, 1))?.extract::<(PyTensor, PyTensor)>(py)?;
+        Ok((result.0.0, result.1.0))
     })
 }

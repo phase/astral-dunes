@@ -27,7 +27,7 @@ TODO List / Notes
       - [recompile tch-rs](https://github.com/LaurentMazare/tch-rs/issues/488#issuecomment-1879521129) with the latest pytorch nightly
       - compiling pytorch took 58min
       - [forked tch-rs](https://github.com/phase/tch-rs/tree/pytorch-nightly)
-      - do I need to fork pytorch to add new metal kernels?
+      - do I need to fork pytorch to add new [metal kernels](https://github.com/ml-explore/mlx/pull/735)?
     - [ ] Fix calling Python with PyO3
     - [ ] Some Fast Attention impl
     - [ ] Weight conversion from pickle to safetensors
