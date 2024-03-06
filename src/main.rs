@@ -7,6 +7,7 @@ use pyo3::prelude::*;
 
 mod gelu;
 mod linear;
+mod mem;
 mod rmsnorm;
 mod rope;
 mod self_attention;
@@ -22,10 +23,9 @@ use transformer::*;
 pub const NO_WEIGHT_DECAY_GROUP: usize = 0;
 pub const WEIGHT_DECAY_GROUP: usize = 1;
 const LEARNING_RATE: f64 = 0.0003;
-const BLOCK_SIZE: i64 = 128;
 const BATCH_SIZE: i64 = 64;
 const EPOCHS: i64 = 100;
-const SAMPLING_LEN: i64 = 4096;
+const SAMPLING_LEN: i64 = 2048;
 
 #[derive(Debug)]
 pub struct GPTConfig;
@@ -45,16 +45,16 @@ impl BlockConfig for LlamaConfig {
     type FF = Swish;
 }
 
-fn sample(data: &TextData, model: &impl ModuleT, input: Tensor, kind: Kind) -> String {
+fn sample(data: &TextData, model: &impl ModuleT, input: Tensor, cfg: &Config) -> String {
     let mut input = input;
     let mut result = String::new();
 
     for _ in 0..SAMPLING_LEN {
         let logits = input.apply_t(model, false).i((0, -1, ..));
-        let sampled_y = logits.softmax(-1, kind).multinomial(1, true);
+        let sampled_y = logits.softmax(-1, cfg.kind).multinomial(1, true);
         let last_label = i64::try_from(&sampled_y).unwrap();
         result.push(data.label_to_char(last_label));
-        input = Tensor::cat(&[input, sampled_y.view([1, 1])], 1).narrow(1, 1, BLOCK_SIZE);
+        input = Tensor::cat(&[input, sampled_y.view([1, 1])], 1).narrow(1, 1, cfg.block_size);
     }
 
     result
@@ -76,24 +76,46 @@ fn main() -> anyhow::Result<()> {
     let labels = data.labels();
     println!("labels: {:?}", labels);
 
-    let cfg = Config {
+    let _mistral = Config {
         kind: Kind::Float,
         vocab_size: labels,
         n_embd: 4096,
         ff_int_dim: 14336,
         n_head: 8,
         n_layer: 32,
-        block_size: BLOCK_SIZE,
+        block_size: 1024,
+        attn_pdrop: 0.0,
+        resid_pdrop: 0.0,
+        embd_pdrop: 0.0,
+    };
+
+    let cfg = Config {
+        kind: Kind::BFloat16,
+        vocab_size: labels,
+        n_embd: 256,
+        ff_int_dim: 1048,
+        n_head: 8,
+        n_layer: 4,
+        block_size: 1024,
         attn_pdrop: 0.0,
         resid_pdrop: 0.0,
         embd_pdrop: 0.0,
     };
 
     println!("Building model");
-    let gpt = Transformer::<LlamaConfig>::new(&(vs.root() / "gpt"), &cfg);
+    let gpt = Transformer::<LlamaConfig>::new(&vs.root(), &cfg);
+
+    let model_size = vs.trainable_variables().iter().fold(0, |sum, tensor| {
+        sum + tensor.size().iter().fold(1, |a, b| a * b)
+    });
+    println!("Model size: {}. Context window: {}", model_size, cfg.block_size);
+
+    // print memory usage
+    crate::mem::debug_memory("Memory usage before training");
+
     let args: Vec<_> = std::env::args().collect();
     if args.len() < 2 {
-        anyhow::bail!("usage: main (train|predict weights.ot seqstart)")
+        anyhow::bail!("Usage: astral-dunes (train|predict weights.ot seqstart)")
     }
 
     match args[1].as_str() {
@@ -105,16 +127,16 @@ fn main() -> anyhow::Result<()> {
             vs.load(args[3].as_str())?;
 
             let start = args[3].as_str();
-            let input = Tensor::zeros([1, BLOCK_SIZE], (Kind::Int64, device));
+            let input = Tensor::zeros([1, cfg.block_size], (Kind::Int64, device));
             for (idx, c) in start.chars().rev().enumerate() {
                 let idx = idx as i64;
-                if idx >= BLOCK_SIZE {
+                if idx >= cfg.block_size {
                     break;
                 }
                 let label = data.char_to_label(c)? as i64;
-                let _ = input.i((0, BLOCK_SIZE - 1 - idx)).fill_(label);
+                let _ = input.i((0, cfg.block_size - 1 - idx)).fill_(label);
             }
-            println!("{}", sample(&data, &gpt, input, cfg.kind));
+            println!("{}", sample(&data, &gpt, input, &cfg));
         }
         "train" => {
             println!("Starting Training");
@@ -125,40 +147,41 @@ fn main() -> anyhow::Result<()> {
             for epoch in 1..(1 + EPOCHS) {
                 let mut sum_loss = 0.;
                 let mut cnt_loss = 0.;
-                for batch in data.iter_shuffle(BLOCK_SIZE + 1, BATCH_SIZE) {
+                for batch in data.iter_shuffle(cfg.block_size + 1, BATCH_SIZE) {
                     let xs = batch
-                        .narrow(1, 0, BLOCK_SIZE)
+                        .narrow(1, 0, cfg.block_size)
                         .to_kind(Kind::Int64)
                         .to_device(device);
                     let ys = batch
-                        .narrow(1, 1, BLOCK_SIZE)
+                        .narrow(1, 1, cfg.block_size)
                         .to_kind(Kind::Int64)
                         .to_device(device);
                     let logits = xs.apply_t(&gpt, true);
                     let loss = logits
-                        .view([BATCH_SIZE * BLOCK_SIZE, labels])
-                        .cross_entropy_for_logits(&ys.view([BATCH_SIZE * BLOCK_SIZE]));
+                        .view([BATCH_SIZE * cfg.block_size, labels])
+                        .cross_entropy_for_logits(&ys.view([BATCH_SIZE * cfg.block_size]));
                     opt.backward_step_clip(&loss, 0.5);
                     sum_loss += f64::try_from(&loss)?;
                     cnt_loss += 1.;
                     idx += 1;
 
-                    if idx % 10 == 0 && idx % 500 != 0  {
-                        println!("epoch: {:4} | batch: {:4}", epoch, idx);
-                    } else if idx == 5 || idx % 500 == 0 {
-                        println!("epoch: {:4} | loss: {:5.3}", epoch, sum_loss / cnt_loss);
+                    let perplexity = 2_f64.powf(sum_loss / cnt_loss);
+                    crate::mem::debug_memory(format!("epoch={:4} batch={:4} ppl={:5.3} mem", epoch, idx, perplexity));
+
+                    if idx == 5 || idx % 500 == 0 {
+                        println!("epoch={:4} loss={:5.3}", epoch, sum_loss / cnt_loss);
 
                         println!(".. testing inference");
-                        let input = Tensor::zeros([1, BLOCK_SIZE], (Kind::Int64, device));
-                        let output: String = sample(&data, &gpt, input, cfg.kind);
+                        let input = Tensor::zeros([1, cfg.block_size], (Kind::Int64, device));
 
+                        let output: String = sample(&data, &gpt, input, &cfg);
                         // save output & weights to disk
                         println!(".. saving weights");
-                        let filename = format!("data/{experiment}/gpt{idx}.txt");
+                        let filename = format!("data/{experiment}/model{idx}.txt");
                         println!("{}", output);
                         std::fs::write(filename, output)?;
 
-                        if let Err(err) = vs.save(format!("data/{experiment}/gpt{idx}.ot")) {
+                        if let Err(err) = vs.save(format!("data/{experiment}/model{idx}.ot")) {
                             println!("error saving model: {err}");
                         }
                         sum_loss = 0.;
@@ -172,6 +195,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+// TODO this dies
 fn test_loading_pytorch() -> PyResult<()> {
     pyo3::prepare_freethreaded_python();
     Python::with_gil(|py| {

@@ -2,21 +2,48 @@
 
 ![astral dunes](./img/astral_dunes.png)
 
-Transformer experiments with [tch-rs](https://github.com/LaurentMazare/tch-rs).
+Transformer experiments with Rust + PyTorch.
 
-Ideas
+Goals
+
+- Provide a toolkit for building Transformers with PyTorch in Rust
+  - should be simple to translate / call PyTorch code
+  - generic core that allows plugging in different transformer components
+- Load models
+  - Mistral, Mixtral, LLaMa
+- Run fast on macOS, M2 Ultra, 128GB memory
+  - should be fusing ops, allocating tensors intelligently, etc.
+- Augment models
+  - Quantize, Finetuning, LoRA, MoE, Block expansion, SparseGPT(?)
+
+TODO List / Notes
 
 - [x] GPT 2
     - [x] Training
     - [x] Inference
 - [ ] Mistral 7B
+    - [x] Model implemented
+    - [x] BFloat16 support on MPS
+      - [recompile tch-rs](https://github.com/LaurentMazare/tch-rs/issues/488#issuecomment-1879521129) with the latest pytorch nightly
+      - compiling pytorch took 58min
+      - [forked tch-rs](https://github.com/phase/tch-rs/tree/pytorch-nightly)
+      - do I need to fork pytorch to add new metal kernels?
+    - [ ] Fix calling Python with PyO3
+    - [ ] Some Fast Attention impl
     - [ ] Weight conversion from pickle to safetensors
     - [ ] Load weights
-    - [ ] Finetuning
-- [ ] Mixtral MoE impl
+    - [ ] Inference
+- [ ] Finetuning
+  - [ ] Gen instruction data with [Alpaca](https://github.com/tatsu-lab/stanford_alpaca), maybe using GPT-4 or Claude 3?
+- [ ] Mixture of Experts
+  - [ ] Mixtral impl
+  - [ ] LLaMA-MoE impl with Continual Pretraining for reconstructing expert routing networks
+- [ ] LoRA
+  - [ ] sparse Mixture of LoRA Experts
+- [ ] Block Expansions
+  - see LLaMA Pro: Progessions LLaMA with Block Expansion
 - [ ] Benchmarking
     - Time everything
-    - Track perplexity (`2^cross_entropy_loss`)
     - Make some graphs? maybe polars -> plotnine?
     - Track tensor allocations?
 
