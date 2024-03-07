@@ -22,19 +22,24 @@ TODO List / Notes
     - [x] Training
     - [x] Inference
 - [ ] Mistral 7B
-    - [x] Model implemented
+    - [ ] Model implemented
+      - [ ] Attention impl needs RoPE + KV Cache
     - [x] BFloat16 support on MPS
       - [recompile tch-rs](https://github.com/LaurentMazare/tch-rs/issues/488#issuecomment-1879521129) with the latest pytorch nightly
       - compiling pytorch took 58min
       - [forked tch-rs](https://github.com/phase/tch-rs/tree/pytorch-nightly)
       - do I need to fork pytorch to add new [metal kernels](https://github.com/ml-explore/mlx/pull/735)?
-    - [ ] Fix calling Python with PyO3
-    - [ ] Some Fast Attention impl
-    - [ ] Weight conversion from pickle to safetensors
-    - [ ] Load weights
+    - [x] Call Python functions from Rust with PyO3 that aren't in tch-rs' api
+    - [ ] Weight conversions & loading
+      - [ ] arbitrary remapping of weight names
+      - [ ] from pickle to safetensors
+      - [ ] from safetensors to torch tensors
+      - [ ] [gguf?](https://github.com/ggerganov/ggml/issues/220)
     - [ ] Inference
 - [ ] Finetuning
-  - [ ] Gen instruction data with [Alpaca](https://github.com/tatsu-lab/stanford_alpaca), maybe using GPT-4 or Claude 3?
+  - Lots of instruction data
+    - Gen instruction data with [Alpaca](https://github.com/tatsu-lab/stanford_alpaca), maybe using GPT-4 or Claude 3?
+    - [UltraChat](https://arxiv.org/pdf/2305.14233.pdf)
 - [ ] Mixture of Experts
   - [ ] Mixtral impl
   - [ ] LLaMA-MoE impl with Continual Pretraining for reconstructing expert routing networks

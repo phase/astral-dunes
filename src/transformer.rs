@@ -18,12 +18,14 @@ pub struct Config {
     pub n_head: i64,
     /// TODO from mistral, what is this?
     pub n_kv_heads: i64,
-    // number of block layers
+    /// number of block layers
     pub n_layer: i64,
     pub block_size: i64,
     pub attn_pdrop: f64,
     pub resid_pdrop: f64,
     pub embd_pdrop: f64,
+    /// Does this model use position encoding before the block layers?
+    pub position_encoding: bool,
 }
 
 pub trait NormLayer: ModuleT + Module {
@@ -80,7 +82,7 @@ impl<Form: BlockConfig> ModuleT for Block<Form> {
 pub struct Transformer<Form: BlockConfig> {
     embd_pdrop: f64,
     tok_emb: nn::Embedding,
-    pos_emb: Tensor,
+    pos_emb: Option<Tensor>,
     ln_f: Form::Norm,
     head: Linear,
     blocks: nn::SequentialT,
@@ -96,12 +98,16 @@ impl<Form: BlockConfig> Transformer<Form> {
             cfg.dim,
             Default::default(),
         );
-        let pos_emb = p.zeros("pos_emb", &[1, cfg.block_size, cfg.dim]);
+        let pos_emb = if cfg.position_encoding {
+            Some(p.zeros("pos_emb", &[1, cfg.block_size, cfg.dim]))
+        } else {
+            None
+        };
         let ln_f = Form::Norm::new(&(p / "norm"), cfg.dim, cfg.kind);
-        let head = Linear::new(p / "lm_head", cfg.dim, cfg.vocab_size, cfg.kind);
+        let head = Linear::new_no_bias(p / "lm_head", cfg.dim, cfg.vocab_size, cfg.kind);
         let mut blocks = nn::seq_t();
         for i in 0..cfg.n_layer {
-            blocks = blocks.add(Block::<Form>::new(&(p / "model" / "layers" / i), cfg));
+            blocks = blocks.add(Block::<Form>::new(&(p / "layers" / i), cfg));
         }
         Self {
             embd_pdrop: cfg.embd_pdrop,
@@ -119,8 +125,15 @@ impl<Form: BlockConfig> ModuleT for Transformer<Form> {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         let (_sz_b, sz_t) = xs.size2().unwrap();
         let tok_emb = xs.apply(&self.tok_emb);
-        let pos_emb = self.pos_emb.i((.., ..sz_t, ..));
-        let xs = tok_emb + pos_emb;
+
+        // apply position encodings if they exist
+        let xs = if let Some(pos_emb) = &self.pos_emb {
+            let pos_emb = pos_emb.i((.., ..sz_t, ..));
+            tok_emb + pos_emb
+        } else {
+            tok_emb
+        };
+
         xs.dropout(self.embd_pdrop, train)
             .apply_t(&self.blocks, train)
             .apply(&self.ln_f)

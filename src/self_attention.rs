@@ -19,10 +19,10 @@ pub struct SelfAttention {
 
 impl AttentionLayer for SelfAttention {
     fn new(p: &Path, cfg: &Config) -> Self {
-        let query = Linear::new(p / "q_proj", cfg.dim, cfg.n_head * cfg.head_dim, cfg.kind);
-        let key = Linear::new(p / "k_proj", cfg.dim, cfg.n_kv_heads * cfg.head_dim, cfg.kind);
-        let value = Linear::new(p / "v_proj", cfg.dim, cfg.n_kv_heads * cfg.head_dim, cfg.kind);
-        let proj = Linear::new(p / "o_proj", cfg.n_kv_heads * cfg.head_dim, cfg.dim, cfg.kind);
+        let query = Linear::new_no_bias(p / "q_proj", cfg.dim, cfg.n_head * cfg.head_dim, cfg.kind);
+        let key = Linear::new_no_bias(p / "k_proj", cfg.dim, cfg.n_kv_heads * cfg.head_dim, cfg.kind);
+        let value = Linear::new_no_bias(p / "v_proj", cfg.dim, cfg.n_kv_heads * cfg.head_dim, cfg.kind);
+        let proj = Linear::new_no_bias(p / "o_proj", cfg.n_kv_heads * cfg.head_dim, cfg.dim, cfg.kind);
         let mask_init = Tensor::ones(
             [cfg.block_size, cfg.block_size],
             (cfg.kind, p.device()),
@@ -43,6 +43,7 @@ impl AttentionLayer for SelfAttention {
     }
 }
 
+#[allow(non_snake_case)] // follow literature / python conventions over rust conventions?
 impl ModuleT for SelfAttention {
     fn forward_t(&self, xs: &Tensor, train: bool) -> Tensor {
         // Batch size, sequence length, embedding dimensionality (n_embed)
