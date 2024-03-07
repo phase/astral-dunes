@@ -10,6 +10,7 @@ use pyo3::{prelude::*, types::{PyDict, PyIterator, PyTuple}};
 use safetensors::Dtype;
 
 mod gelu;
+mod kernels;
 mod linear;
 mod mem;
 mod rmsnorm;
