@@ -2,19 +2,7 @@
 
 ![astral dunes](./img/astral_dunes.png)
 
-Transformer experiments with Rust + PyTorch.
-
-Goals
-
-- Provide a toolkit for building Transformers with PyTorch in Rust
-  - should be simple to translate / call PyTorch code
-  - generic core that allows plugging in different transformer components
-- Load models
-  - Mistral, Mixtral, LLaMa
-- Run fast on macOS, M2 Ultra, 128GB memory
-  - should be fusing ops, allocating tensors intelligently, etc.
-- Augment models
-  - Quantize, Finetuning, LoRA, MoE, Block expansion, SparseGPT(?)
+Transformer experiments with Rust + PyTorch. [Writeup on my blog](https://jadon.io/blog/pytorch-rust/).
 
 TODO List / Notes
 
@@ -36,7 +24,7 @@ TODO List / Notes
       - [ ] from safetensors to torch tensors
       - [ ] [gguf?](https://github.com/ggerganov/ggml/issues/220)
     - [ ] Inference
-- [ ] Finetuning
+<!-- - [ ] Finetuning
   - Lots of instruction data
     - Gen instruction data with [Alpaca](https://github.com/tatsu-lab/stanford_alpaca), maybe using GPT-4 or Claude 3?
     - [UltraChat](https://arxiv.org/pdf/2305.14233.pdf)
@@ -50,7 +38,7 @@ TODO List / Notes
 - [ ] Benchmarking
     - Time everything
     - Make some graphs? maybe polars -> plotnine?
-    - Track tensor allocations?
+    - Track tensor allocations? -->
 
 ## experiment: zig compiler
 
