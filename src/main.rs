@@ -1,13 +1,16 @@
 use std::collections::HashMap;
 
+use pyo3::{
+    prelude::*,
+    types::{PyDict, PyIterator, PyTuple},
+};
 use pyo3_tch::PyTensor;
+use safetensors::Dtype;
 use tch::{
     data::TextData,
     nn::{self, LayerNorm, ModuleT, OptimizerConfig, VarStore},
     Device, IndexOp, Kind, Tensor,
 };
-use pyo3::{prelude::*, types::{PyDict, PyIterator, PyTuple}};
-use safetensors::Dtype;
 
 mod gelu;
 mod kernels;
@@ -21,8 +24,8 @@ mod transformer;
 
 use gelu::Gelu;
 use rmsnorm::RmsNorm;
-use swish::Swish;
 use self_attention::SelfAttention;
+use swish::Swish;
 use transformer::*;
 
 pub const NO_WEIGHT_DECAY_GROUP: usize = 0;
@@ -96,9 +99,8 @@ fn _load_safetensors(file_name: impl AsRef<str>, vs: &VarStore) -> anyhow::Resul
         let size: Vec<i64> = view.shape().iter().map(|&x| x as i64).collect();
         let kind: Kind = _convert_dtype_to_kind(view.dtype());
         // Using from_blob here instead of from_data_size avoids unnecessary copies
-        let src_tensor = unsafe {
-            Tensor::from_blob(view.data().as_ptr(), &size, &[], kind, Device::Cpu)
-        };
+        let src_tensor =
+            unsafe { Tensor::from_blob(view.data().as_ptr(), &size, &[], kind, Device::Cpu) };
         var.f_copy_(&src_tensor)?;
     }
     Ok(())
@@ -117,7 +119,7 @@ fn load_torch_model(model_location: String) -> PyResult<Vec<(String, Tensor)>> {
         .into();
 
         // call the function & get the state_dict
-        let dict: PyObject = fun.call1(py,  (model_location,))?;
+        let dict: PyObject = fun.call1(py, (model_location,))?;
         let dict: Py<PyDict> = dict.downcast::<PyDict>(py)?.into();
         // get the items() out
         // this is an iterator of (String, Tensor)
@@ -165,7 +167,7 @@ fn main() -> anyhow::Result<()> {
         n_head: 32,
         n_kv_heads: 8,
         n_layer: 32,
-        block_size: 16,//1024,
+        block_size: 16, //1024,
         attn_pdrop: 0.1,
         resid_pdrop: 0.1,
         embd_pdrop: 0.1,
@@ -177,7 +179,7 @@ fn main() -> anyhow::Result<()> {
         vocab_size: labels,
         dim: 512,
         head_dim: 64,
-        hidden_dim: 512*4,
+        hidden_dim: 512 * 4,
         n_head: 16,
         n_kv_heads: 4,
         n_layer: 16,
@@ -194,7 +196,10 @@ fn main() -> anyhow::Result<()> {
     let model_size = vs.trainable_variables().iter().fold(0, |sum, tensor| {
         sum + tensor.size().iter().fold(1, |a, b| a * b)
     });
-    println!("Model size: {}. Context window: {}", model_size, cfg.block_size);
+    println!(
+        "Model size: {}. Context window: {}",
+        model_size, cfg.block_size
+    );
     crate::mem::debug_memory("Memory usage before training");
 
     let args: Vec<_> = std::env::args().collect();
@@ -218,7 +223,12 @@ fn main() -> anyhow::Result<()> {
             for (name, tensor) in expected_vars.iter() {
                 if let Some(source_tensor) = source_map.get(name) {
                     if *tensor != *source_tensor.size() {
-                        println!("{}: expected {:?} but got {:?}", name, tensor, source_tensor.size());
+                        println!(
+                            "{}: expected {:?} but got {:?}",
+                            name,
+                            tensor,
+                            source_tensor.size()
+                        );
                     } else {
                         println!("{}: ok", name);
                     }
@@ -226,7 +236,7 @@ fn main() -> anyhow::Result<()> {
                     println!("{}: missing", name);
                 }
             }
-        },
+        }
         "predict" => {
             // load varstore
             vs.load(args[3].as_str())?;
@@ -271,7 +281,10 @@ fn main() -> anyhow::Result<()> {
                     idx += 1;
 
                     let perplexity = 2_f64.powf(sum_loss / cnt_loss);
-                    crate::mem::debug_memory(format!("epoch={:4} batch={:4} ppl={:5.3} mem", epoch, idx, perplexity));
+                    crate::mem::debug_memory(format!(
+                        "epoch={:4} batch={:4} ppl={:5.3} mem",
+                        epoch, idx, perplexity
+                    ));
 
                     if idx % 500 == 0 {
                         println!("epoch={:4} loss={:5.3}", epoch, sum_loss / cnt_loss);
@@ -313,7 +326,10 @@ pub fn scaled_dot_product_attention(q: Tensor, k: Tensor, v: Tensor) -> PyResult
         .into();
 
         // call object without any arguments
-        let result = fun.call1(py, (PyTensor(q), PyTensor(k), PyTensor(v)))?.extract::<PyTensor>(py)?.0;
+        let result = fun
+            .call1(py, (PyTensor(q), PyTensor(k), PyTensor(v)))?
+            .extract::<PyTensor>(py)?
+            .0;
         Ok(result)
     })
 }
@@ -330,7 +346,9 @@ pub fn repeat_kv(k: Tensor, v: Tensor, repeats: i64) -> PyResult<(Tensor, Tensor
         .into();
 
         // call object without any arguments
-        let result = fun.call1(py, (PyTensor(k), PyTensor(v), repeats, 1))?.extract::<(PyTensor, PyTensor)>(py)?;
-        Ok((result.0.0, result.1.0))
+        let result = fun
+            .call1(py, (PyTensor(k), PyTensor(v), repeats, 1))?
+            .extract::<(PyTensor, PyTensor)>(py)?;
+        Ok((result.0 .0, result.1 .0))
     })
 }

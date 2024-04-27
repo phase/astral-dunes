@@ -1,6 +1,6 @@
 use pyo3::{prelude::*, types::PyDict};
 use pyo3_tch::PyTensor;
-use tch::{*, nn::*};
+use tch::{nn::*, *};
 
 #[pyfunction]
 #[pyo3(name = "forward")]
@@ -28,10 +28,9 @@ fn exp_module() -> impl Fn(Tensor) -> Tensor {
 /// The forward() and backward() functions are registered in the fn_register closure.
 fn init_tensor_op1(
     name: impl AsRef<str>,
-    fn_register: impl Fn(&PyModule) -> PyResult<()>
+    fn_register: impl Fn(&PyModule) -> PyResult<()>,
 ) -> impl Fn(Tensor) -> Tensor {
-    let fun = init_pymodule(name, fn_register)
-        .expect("failed to initialize module");
+    let fun = init_pymodule(name, fn_register).expect("failed to initialize module");
 
     move |tensor: Tensor| {
         Python::with_gil(|py| {
@@ -47,17 +46,20 @@ fn init_tensor_op1(
 const KERNEL_AUTOGRAD_PY_TEMPLATE: &str = include_str!("kernel_autograd.py");
 
 /// Initialize a Python module with a given name and a function to register pyfunctions in it.
-fn init_pymodule(name: impl AsRef<str>, fn_register: impl Fn(&PyModule) -> PyResult<()>) -> PyResult<PyObject> {
+fn init_pymodule(
+    name: impl AsRef<str>,
+    fn_register: impl Fn(&PyModule) -> PyResult<()>,
+) -> PyResult<PyObject> {
     let name = name.as_ref();
-	Python::with_gil(|py| {
+    Python::with_gil(|py| {
         // create a module and register the functions
-		let module = PyModule::new(py, name)?;
-		fn_register(&module)?;
+        let module = PyModule::new(py, name)?;
+        fn_register(&module)?;
 
-		// insert into sys.modules
-		let sys = PyModule::import(py, "sys")?;
-		let py_modules: &PyDict = sys.getattr("modules")?.downcast()?;
-		py_modules.set_item(name, module)?;
+        // insert into sys.modules
+        let sys = PyModule::import(py, "sys")?;
+        let py_modules: &PyDict = sys.getattr("modules")?.downcast()?;
+        py_modules.set_item(name, module)?;
 
         let function_wrapper_source = KERNEL_AUTOGRAD_PY_TEMPLATE.replace("NEW", name);
 
@@ -74,7 +76,7 @@ fn init_pymodule(name: impl AsRef<str>, fn_register: impl Fn(&PyModule) -> PyRes
             .into();
 
         Ok(fun)
-	})
+    })
 }
 
 #[test]

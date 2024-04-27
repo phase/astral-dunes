@@ -1,9 +1,11 @@
-use tch::{*};
+use tch::*;
 
 pub fn _precompute_freqs_cis(seq_len: i64, n_embed: i64, n_head: i64) -> Tensor {
     let n_elem = n_embed / n_head;
-    let theta: Vec<_> =
-        (0..n_elem).step_by(2).map(|i| 1f32 / 10000f32.powf(i as f32 / n_elem as f32)).collect();
+    let theta: Vec<_> = (0..n_elem)
+        .step_by(2)
+        .map(|i| 1f32 / 10000f32.powf(i as f32 / n_elem as f32))
+        .collect();
     let arange: Vec<_> = (0..seq_len).map(|c| c as f32).collect();
     let theta = Tensor::from_slice(&theta);
     let arange = Tensor::from_slice(&arange);
@@ -34,4 +36,3 @@ pub fn _apply_rotary_emb(x: &Tensor, freqs_cis: &Tensor) -> Tensor {
     dims.push(v1 * v2);
     rope.reshape(&dims)
 }
-

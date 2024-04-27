@@ -1,5 +1,6 @@
 use tch::{
-    nn::{self, layer_norm, Module, ModuleT, Path}, IndexOp, Kind, Tensor
+    nn::{self, layer_norm, Module, ModuleT, Path},
+    IndexOp, Kind, Tensor,
 };
 
 use crate::linear::Linear;

@@ -1,5 +1,8 @@
-use tch::{nn::{Module, Path}, Kind, Tensor};
 use crate::{linear::Linear, transformer::FeedForward};
+use tch::{
+    nn::{Module, Path},
+    Kind, Tensor,
+};
 
 /// FFN using Gaussian Error Linear Units, activation function
 #[derive(Debug)]

@@ -1,6 +1,9 @@
-use tch::{Tensor, IndexOp, nn::{Path, ModuleT}};
-use crate::{linear::Linear, Config};
 use crate::transformer::AttentionLayer;
+use crate::{linear::Linear, Config};
+use tch::{
+    nn::{ModuleT, Path},
+    IndexOp, Tensor,
+};
 
 // Causal Self Attention
 #[derive(Debug)]
@@ -20,13 +23,26 @@ pub struct SelfAttention {
 impl AttentionLayer for SelfAttention {
     fn new(p: &Path, cfg: &Config) -> Self {
         let query = Linear::new_no_bias(p / "q_proj", cfg.dim, cfg.n_head * cfg.head_dim, cfg.kind);
-        let key = Linear::new_no_bias(p / "k_proj", cfg.dim, cfg.n_kv_heads * cfg.head_dim, cfg.kind);
-        let value = Linear::new_no_bias(p / "v_proj", cfg.dim, cfg.n_kv_heads * cfg.head_dim, cfg.kind);
-        let proj = Linear::new_no_bias(p / "o_proj", cfg.n_kv_heads * cfg.head_dim, cfg.dim, cfg.kind);
-        let mask_init = Tensor::ones(
-            [cfg.block_size, cfg.block_size],
-            (cfg.kind, p.device()),
-        ).tril(0);
+        let key = Linear::new_no_bias(
+            p / "k_proj",
+            cfg.dim,
+            cfg.n_kv_heads * cfg.head_dim,
+            cfg.kind,
+        );
+        let value = Linear::new_no_bias(
+            p / "v_proj",
+            cfg.dim,
+            cfg.n_kv_heads * cfg.head_dim,
+            cfg.kind,
+        );
+        let proj = Linear::new_no_bias(
+            p / "o_proj",
+            cfg.n_kv_heads * cfg.head_dim,
+            cfg.dim,
+            cfg.kind,
+        );
+        let mask_init =
+            Tensor::ones([cfg.block_size, cfg.block_size], (cfg.kind, p.device())).tril(0);
         let mask = mask_init.view([1, 1, cfg.block_size, cfg.block_size]);
         Self {
             n_head: cfg.n_head,
@@ -38,7 +54,7 @@ impl AttentionLayer for SelfAttention {
             query,
             value,
             proj,
-            mask
+            mask,
         }
     }
 }
@@ -63,8 +79,7 @@ impl ModuleT for SelfAttention {
         // Rope Embedding goes here
 
         // Repeat keys and values to match the number of query heads
-        let (k, v) = crate::repeat_kv(k, v, repeats)
-            .expect("failed to call repeat_kv");
+        let (k, v) = crate::repeat_kv(k, v, repeats).expect("failed to call repeat_kv");
 
         let ys = if true {
             // use pytorch impl (currently not using a metal kernel on macOS)
@@ -81,7 +96,10 @@ impl ModuleT for SelfAttention {
         };
 
         // reassembly head outputs side by side
-        let ys = ys.transpose(1, 2).contiguous().view([B, L, self.n_head * self.head_dim]);
+        let ys = ys
+            .transpose(1, 2)
+            .contiguous()
+            .view([B, L, self.n_head * self.head_dim]);
 
         // output projection
         ys.apply(&self.proj).dropout(self.resid_pdrop, train)
